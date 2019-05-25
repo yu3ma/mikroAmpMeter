@@ -95,6 +95,37 @@
 
 /* USER CODE BEGIN Private defines */
 
+// **************************************************************************************
+// **************************************************************************************
+// AD Definicije
+// **************************************************************************************
+// **************************************************************************************
+#define AD_REFERENCE  2.5000 // U Voltima
+#define AD_RESOLUTION 4096ul // U Digitima
+
+typedef struct
+{
+	unsigned short ADCLChRaw;
+	unsigned short ADCHChRaw;
+	float ADCLChAverage;
+	float ADCHChAverage;
+	
+	unsigned char LRange;
+	unsigned char HRange;
+	
+} _CurrentMeasurement_type;
+
+typedef struct
+{
+	unsigned short ADCRaw;
+	float ADCAverage;
+	
+} _VoltageMeasurement_type;
+
+
+extern _VoltageMeasurement_type	VoltageMeasurement;
+extern _CurrentMeasurement_type	CurrentMeasurement;
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

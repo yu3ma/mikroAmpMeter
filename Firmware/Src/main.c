@@ -77,6 +77,25 @@ UART_HandleTypeDef huart2;
 /* Private variables ---------------------------------------------------------*/
 uint32_t OldTick100ms = 0;
 
+///////// ADC Variables and Settings
+#define ADC_NUMBER_OF_CHANNELS 5u
+#define ADC_NUMBER_OF_SAMPLES 32u
+#define ADC_ARRAY_SIZE (ADC_NUMBER_OF_CHANNELS * ADC_NUMBER_OF_SAMPLES) // 3 Channels and 32 samples 
+
+#define ADC_ADV 			0u 	// Voltage 						PA4 / AD CHANNEL 4
+#define ADC_ADL				1u	// Current Low range 	PB0 / AD CHANNEL 8 
+#define ADC_ADH				2u 	// Current High range	PB9 / AD CHANNEL 9
+#define ADC_INTVREF		3u	// Internal Channel
+#define ADC_INTEMPE		4u	// Internal Channel
+
+
+unsigned long ADCDmaBuffer[ADC_ARRAY_SIZE];
+unsigned char ADCDone = 0;
+
+_VoltageMeasurement_type	VoltageMeasurement;
+_CurrentMeasurement_type	CurrentMeasurement;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,6 +118,88 @@ static void MX_SPI1_Init(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
+
+// ADC ConvCallback
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc1)
+{
+	HAL_ADC_Stop_DMA(&hadc);
+	ADCDone = 1;	
+}
+
+// Ovde radimo merenje napona sa AD konvertora
+void ADTasks(void)
+{
+	unsigned long ADCRawAcu[ADC_NUMBER_OF_CHANNELS];
+	unsigned short ADCRawFiltered[ADC_NUMBER_OF_CHANNELS];
+	unsigned char Pointer, Sample;
+	
+	if(ADCDone == 0)
+		return;
+	
+	ADCDone = 0;
+			
+	// Get results from DMA buffer
+	ADCRawAcu[ADC_ADV] = 0;
+	ADCRawAcu[ADC_ADL] = 0;
+	ADCRawAcu[ADC_ADH] = 0;
+	
+	ADCRawAcu[ADC_INTEMPE] = 0;
+	ADCRawAcu[ADC_INTVREF] = 0;
+
+	Pointer = 0;
+	
+	for(Sample=0; Sample<ADC_NUMBER_OF_SAMPLES; Sample++)
+	{
+		
+		ADCRawAcu[ADC_ADV] += ADCDmaBuffer[Pointer + 0];
+		ADCRawAcu[ADC_ADL] += ADCDmaBuffer[Pointer + 1];
+		ADCRawAcu[ADC_ADH] += ADCDmaBuffer[Pointer + 2];
+		ADCRawAcu[ADC_INTEMPE] += ADCDmaBuffer[Pointer + 3];
+		ADCRawAcu[ADC_INTVREF] += ADCDmaBuffer[Pointer + 4];
+		
+		Pointer += ADC_NUMBER_OF_CHANNELS;
+	}
+
+	ADCRawFiltered[ADC_ADV] = ADCRawAcu[ADC_ADV] / ADC_NUMBER_OF_SAMPLES;
+	ADCRawFiltered[ADC_ADL] = ADCRawAcu[ADC_ADL] / ADC_NUMBER_OF_SAMPLES;
+	ADCRawFiltered[ADC_ADH] = ADCRawAcu[ADC_ADH] / ADC_NUMBER_OF_SAMPLES;
+	ADCRawFiltered[ADC_INTEMPE] = ADCRawAcu[ADC_INTEMPE] / ADC_NUMBER_OF_SAMPLES;
+	ADCRawFiltered[ADC_INTVREF] = ADCRawAcu[ADC_INTVREF] / ADC_NUMBER_OF_SAMPLES;
+	
+	VoltageMeasurement.ADCRaw = ADCRawFiltered[ADC_ADV];
+	CurrentMeasurement.ADCLChRaw = ADCRawFiltered[ADC_ADL];	
+	CurrentMeasurement.ADCHChRaw = ADCRawFiltered[ADC_ADH];
+	
+	/////////////////
+	
+	// This starts the ADC in interrupt mode
+	HAL_ADC_Start_DMA(&hadc, (uint32_t*)&ADCDmaBuffer, ADC_ARRAY_SIZE);
+	
+	/////////////////
+	
+	// Measure Voltage Calculation 
+	#define RESISTOR_DIVIDER_UP	62.00 // 62k 0.1%
+	#define RESISTOR_DIVIDER_DN	 4.70 // 4k7 0.1%
+	
+	float DividerRatio = (float)RESISTOR_DIVIDER_DN/((float)RESISTOR_DIVIDER_UP + (float)RESISTOR_DIVIDER_DN); 
+	VoltageMeasurement.ADCAverage = (float)VoltageMeasurement.ADCRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) / (float) DividerRatio; // 
+
+	// Measure Current Calculation ADL
+	#define ADC_LO_RANGE_CURRENT	0.005 // 5mA
+	#define ADC_LO_RANGE_VOLTAGE	2.500 // 2.5V
+
+	#define ADC_HI_RANGE_CURRENT	2.000 // 2A
+	#define ADC_HI_RANGE_VOLTAGE	2.500 // 2.5V
+
+
+	CurrentMeasurement.ADCLChAverage = (float)CurrentMeasurement.ADCLChRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) * (float)ADC_LO_RANGE_CURRENT / (float)ADC_LO_RANGE_VOLTAGE; // 
+
+	// Measure Current Calculation ADL
+	CurrentMeasurement.ADCHChAverage = (float)CurrentMeasurement.ADCHChRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) * (float)ADC_HI_RANGE_CURRENT / (float)ADC_HI_RANGE_VOLTAGE; // 
+
+	
+}
+
 
 /* USER CODE END 0 */
 
@@ -144,6 +245,15 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 	
+	// ADC Callibration and start
+	HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
+
+	// This starts the ADC in interrupt mode
+	HAL_ADC_Start_DMA(&hadc, (uint32_t*)&ADCDmaBuffer, ADC_ARRAY_SIZE);
+
+	HAL_TIM_Base_Start(&htim22); // Used for ADC sample time
+
+	// OLED Display Init
 	ssd1306_Init();
 	
 	HAL_Delay(1000);
@@ -153,8 +263,8 @@ int main(void)
   HAL_Delay(1000);
 
   ssd1306_SetCursor(5,5);
-  ssd1306_WriteString("OLED TEST",Font_11x18,Black);
-
+  ssd1306_WriteString("mikroAMP V1",Font_11x18,Black);
+	
   ssd1306_UpdateScreen();
 
   /* USER CODE END 2 */
@@ -163,6 +273,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+		// ADC tasks
+		ADTasks();
 		
 		if(HAL_GetTick() - OldTick100ms > 100)
 		{
@@ -178,13 +290,17 @@ int main(void)
 //			ssd1306_SetCursor(87,5);
 //			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
 
-			sprintf(LCDBuf, "A:%03u",RxCount);
-			ssd1306_SetCursor(5,32);
-			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+			sprintf(LCDBuf, "Ihigh: %3.3fA", CurrentMeasurement.ADCHChAverage);
+			ssd1306_SetCursor(5,24);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
 
-			sprintf(LCDBuf, "C:%03u", RxCount);
-			ssd1306_SetCursor(70,32);
-			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+			sprintf(LCDBuf, "Ilow: %3.3fmA", CurrentMeasurement.ADCLChAverage * 1000.00);
+			ssd1306_SetCursor(5,35);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+
+			sprintf(LCDBuf, "Volt:%3.3fV", VoltageMeasurement.ADCAverage);
+			ssd1306_SetCursor(5,46);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
 
 			ssd1306_UpdateScreen();
 		}		
