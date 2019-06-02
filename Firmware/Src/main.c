@@ -95,6 +95,11 @@ unsigned char ADCDone = 0;
 _VoltageMeasurement_type	VoltageMeasurement;
 _CurrentMeasurement_type	CurrentMeasurement;
 
+// Display Variables
+unsigned char DisplayPage = MAIN_DISPLAY_PAGE0;
+unsigned char DisplayClrScr = 0;
+
+volatile unsigned long SecondsTimer = 0;
 
 /* USER CODE END PV */
 
@@ -114,11 +119,25 @@ static void MX_SPI1_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
+unsigned char GetANFHighRangeStatus(void);
+void SetStatusLED(unsigned char LedState);
+
 
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
 
+void HAL_SYSTICK_Callback(void)
+{
+	static unsigned int Count1sec = 0;
+	
+	if(++Count1sec >= 1000)
+	{
+		Count1sec = 0;
+	  SecondsTimer++;
+	}
+}
+		
 // ADC ConvCallback
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc1)
 {
@@ -184,6 +203,8 @@ void ADTasks(void)
 	float DividerRatio = (float)RESISTOR_DIVIDER_DN/((float)RESISTOR_DIVIDER_UP + (float)RESISTOR_DIVIDER_DN); 
 	VoltageMeasurement.ADCAverage = (float)VoltageMeasurement.ADCRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) / (float) DividerRatio; // 
 
+	VoltageMeasurement.Cumulative += VoltageMeasurement.ADCAverage;
+
 	// Measure Current Calculation ADL
 	#define ADC_LO_RANGE_CURRENT	0.005 // 5mA
 	#define ADC_LO_RANGE_VOLTAGE	2.500 // 2.5V
@@ -191,15 +212,234 @@ void ADTasks(void)
 	#define ADC_HI_RANGE_CURRENT	2.000 // 2A
 	#define ADC_HI_RANGE_VOLTAGE	2.500 // 2.5V
 
-
 	CurrentMeasurement.ADCLChAverage = (float)CurrentMeasurement.ADCLChRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) * (float)ADC_LO_RANGE_CURRENT / (float)ADC_LO_RANGE_VOLTAGE; // 
 
 	// Measure Current Calculation ADL
 	CurrentMeasurement.ADCHChAverage = (float)CurrentMeasurement.ADCHChRaw * ((float)AD_REFERENCE/(float)AD_RESOLUTION) * (float)ADC_HI_RANGE_CURRENT / (float)ADC_HI_RANGE_VOLTAGE; // 
-
 	
+	// Cumulative ADC measurements // Sample period 100ms
+	if(GetANFHighRangeStatus() == ANF_HIGH_RANGE)
+	{
+		// HIGH RANGE
+
+		SetStatusLED(LED_ON);
+
+		CurrentMeasurement.ADCHCumulative += CurrentMeasurement.ADCHChAverage;
+	}
+	else
+	{
+		// LOW RANGE
+
+		SetStatusLED(LED_OFF);
+
+		CurrentMeasurement.ADCLCumulative += CurrentMeasurement.ADCLChAverage;
+	}
+
+	CurrentMeasurement.Samples ++;
+
 }
 
+void ShowDisplayTask(void)
+{
+	char LCDBuf[32];
+	
+	if(DisplayClrScr)
+	{
+		DisplayClrScr = 0;
+		
+		ssd1306_Fill(White);
+		ssd1306_UpdateScreen();
+	}
+
+	switch (DisplayPage)
+	{
+		case MAIN_DISPLAY_PAGE0:
+		{
+			ssd1306_SetCursor(5,5);
+			ssd1306_WriteString("mikroAMP V1",Font_11x18,Black);
+			
+			sprintf(LCDBuf, "Ihigh: %3.3fA", CurrentMeasurement.ADCHChAverage);
+			ssd1306_SetCursor(5,24);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+
+			sprintf(LCDBuf, "Ilow: %3.3fmA", CurrentMeasurement.ADCLChAverage * 1000.00);
+			ssd1306_SetCursor(5,35);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+
+			sprintf(LCDBuf, "Volt:%3.3fV", VoltageMeasurement.ADCAverage);
+			ssd1306_SetCursor(5,46);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+		}
+		break;
+		
+		case MAIN_DISPLAY_PAGE1:
+		{
+			sprintf(LCDBuf, "Ih: %3.3fA", CurrentMeasurement.ADCHChAverage);
+			ssd1306_SetCursor(5,10);
+			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+
+			sprintf(LCDBuf, "Il: %3.3fmA", CurrentMeasurement.ADCLChAverage * 1000.00);
+			ssd1306_SetCursor(5,38);
+			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+
+
+		}
+		break;		
+		
+		case MAIN_DISPLAY_PAGE2:
+		{
+			sprintf(LCDBuf, "Ihigh [A]");
+			ssd1306_SetCursor(5, 5);
+			ssd1306_WriteString(LCDBuf, Font_11x18, Black);
+
+			sprintf(LCDBuf, "%3.3f", CurrentMeasurement.ADCHChAverage);
+			ssd1306_SetCursor(5, 32);
+			ssd1306_WriteString(LCDBuf, Font_16x26, Black);
+		}
+		break;			
+
+		case MAIN_DISPLAY_PAGE3:
+		{
+			sprintf(LCDBuf, "Ilow [mA]");
+			ssd1306_SetCursor(5, 5);
+			ssd1306_WriteString(LCDBuf, Font_11x18, Black);
+
+			sprintf(LCDBuf, "%3.3f", CurrentMeasurement.ADCLChAverage * 1000.00);
+			ssd1306_SetCursor(5, 32);
+			ssd1306_WriteString(LCDBuf, Font_16x26, Black);
+		}
+		break;			
+
+		case MAIN_DISPLAY_PAGE4:
+		{
+			sprintf(LCDBuf, "Voltage [V]");
+			ssd1306_SetCursor(5, 5);
+			ssd1306_WriteString(LCDBuf, Font_11x18, Black);
+
+			sprintf(LCDBuf, "%3.3f", VoltageMeasurement.ADCAverage);
+			ssd1306_SetCursor(5, 32);
+			ssd1306_WriteString(LCDBuf, Font_16x26,Black);
+		}
+		break;		
+		
+		case MAIN_DISPLAY_PAGE5: // Average Current summ in period of time
+		{
+			sprintf(LCDBuf, "Average:");
+			ssd1306_SetCursor(5, 5);
+			ssd1306_WriteString(LCDBuf, Font_11x18, Black);
+			
+			float CurrentCumulativeCalc;
+			CurrentCumulativeCalc = ((float)CurrentMeasurement.ADCHCumulative + (float)CurrentMeasurement.ADCLCumulative) * 1000.00;
+			CurrentCumulativeCalc /= (float)CurrentMeasurement.Samples; // We have 100ms sampling period, so must divide for 1sec resolution
+			
+			sprintf(LCDBuf, "%3.3f mA", CurrentCumulativeCalc);
+			ssd1306_SetCursor(5, 25);
+			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+
+			unsigned char TimeHours;
+			unsigned char TimeMinutes;
+			unsigned char TimeSeconds;
+			
+			TimeHours = SecondsTimer / 3600;
+			TimeMinutes = (SecondsTimer / 60) % 60;
+			TimeSeconds = SecondsTimer % 60;
+			
+			sprintf(LCDBuf, "%02d:%02d:%02d", TimeHours, TimeMinutes, TimeSeconds);
+			ssd1306_SetCursor(5, 43);
+			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
+		}
+		break;			
+
+		case MAIN_DISPLAY_PAGE6:
+		{
+			ssd1306_SetCursor(5,5);
+			ssd1306_WriteString(DEVICE_NAME,Font_11x18,Black);
+			
+			sprintf(LCDBuf, FIRMWARE_VERSION);
+			ssd1306_SetCursor(5,24);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+
+			sprintf(LCDBuf, HARDWARE_VERSION);
+			ssd1306_SetCursor(5,35);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+
+			sprintf(LCDBuf, WEBSITE_INFO);
+			ssd1306_SetCursor(5,46);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+		}
+		break;
+		
+		default:
+			sprintf(LCDBuf, "Unknown page");
+			ssd1306_SetCursor(0,5);
+			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
+			break;
+		
+	}
+	
+	ssd1306_UpdateScreen();
+}
+
+void ButtonTask(void)
+{
+	static unsigned char Debounce = 0;
+	static unsigned char ButtonIsPressedCnt = 0;
+	
+	if(HAL_GPIO_ReadPin(ROTP_GPIO_Port, ROTP_Pin) == GPIO_PIN_RESET) // Button is pressed
+	{
+		if(++ButtonIsPressedCnt > 30) // If button is pressed more than 5 seconds
+		{
+			ButtonIsPressedCnt = 30;
+			
+			if(DisplayPage == MAIN_DISPLAY_PAGE5) // Average Current Reset
+			{
+				// Reset Timer and Cumulative varibles
+				SecondsTimer = 0;
+				
+				CurrentMeasurement.ADCHCumulative = 0.0;
+				CurrentMeasurement.ADCLCumulative = 0.0;
+				CurrentMeasurement.Samples = 0;
+			}
+		}
+	}
+	else
+	{
+		if((ButtonIsPressedCnt > 0) && (ButtonIsPressedCnt < 20)) // Short Button Press
+		{
+			if(++DisplayPage > MAIN_DISPLAY_LAST_PAGE)
+				DisplayPage = MAIN_DISPLAY_PAGE0;
+				
+			DisplayClrScr = 1;
+		}
+
+		ButtonIsPressedCnt = 0;
+
+	}
+}
+
+unsigned char GetANFHighRangeStatus(void)
+{	
+	if(HAL_GPIO_ReadPin(HIGH_RANGE_GPIO_Port, HIGH_RANGE_Pin) == GPIO_PIN_RESET) // High range is detected
+	{
+		return(ANF_HIGH_RANGE);
+	}
+	else
+	{
+		return(ANF_LOW_RANGE);
+	}
+}
+
+void SetStatusLED(unsigned char LedState)
+{
+	if(LedState == LED_ON)
+	{
+		HAL_GPIO_WritePin(STLED0_GPIO_Port, STLED0_Pin, GPIO_PIN_RESET); // Inverted Becouse LED is connected to Power +VDD
+	}
+	else
+	{
+		HAL_GPIO_WritePin(STLED0_GPIO_Port, STLED0_Pin, GPIO_PIN_SET); // Inverted Becouse LED inverted to Power +VDD
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -262,10 +502,11 @@ int main(void)
 
   HAL_Delay(1000);
 
-  ssd1306_SetCursor(5,5);
-  ssd1306_WriteString("mikroAMP V1",Font_11x18,Black);
-	
-  ssd1306_UpdateScreen();
+	// Variables initialisation
+	CurrentMeasurement.ADCHCumulative = 0.0;
+	CurrentMeasurement.ADCLCumulative = 0.0;
+	VoltageMeasurement.Cumulative = 0.0;
+	CurrentMeasurement.Samples = 0;
 
   /* USER CODE END 2 */
 
@@ -280,29 +521,13 @@ int main(void)
 		{
 			OldTick100ms = HAL_GetTick();
 	
-			HAL_GPIO_TogglePin(STLED0_GPIO_Port, STLED0_Pin);
+			//HAL_GPIO_TogglePin(STLED0_GPIO_Port, STLED0_Pin);
+
+			// Display refresh and show data
+			ButtonTask();
 			
-			static unsigned char RxCount = 0;
-			char LCDBuf[32];
-			RxCount++;
-//			
-//			sprintf(LCDBuf, "%03u", RxCount);
-//			ssd1306_SetCursor(87,5);
-//			ssd1306_WriteString(LCDBuf, Font_11x18,Black);
-
-			sprintf(LCDBuf, "Ihigh: %3.3fA", CurrentMeasurement.ADCHChAverage);
-			ssd1306_SetCursor(5,24);
-			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
-
-			sprintf(LCDBuf, "Ilow: %3.3fmA", CurrentMeasurement.ADCLChAverage * 1000.00);
-			ssd1306_SetCursor(5,35);
-			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
-
-			sprintf(LCDBuf, "Volt:%3.3fV", VoltageMeasurement.ADCAverage);
-			ssd1306_SetCursor(5,46);
-			ssd1306_WriteString(LCDBuf, Font_7x10,Black);
-
-			ssd1306_UpdateScreen();
+			// Scan buttons
+			ShowDisplayTask();
 		}		
 
   /* USER CODE END WHILE */
@@ -699,7 +924,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : ROTB_Pin ROTA_Pin */
   GPIO_InitStruct.Pin = ROTB_Pin|ROTA_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : STLED0_Pin */
@@ -712,7 +937,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : ROTP_Pin HIGH_RANGE_Pin */
   GPIO_InitStruct.Pin = ROTP_Pin|HIGH_RANGE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }

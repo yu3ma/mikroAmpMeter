@@ -95,13 +95,35 @@
 
 /* USER CODE BEGIN Private defines */
 
+#define MAIN_DISPLAY_PAGE0	0u
+#define MAIN_DISPLAY_PAGE1	1u
+#define MAIN_DISPLAY_PAGE2	2u
+#define MAIN_DISPLAY_PAGE3	3u
+#define MAIN_DISPLAY_PAGE4	4u
+#define MAIN_DISPLAY_PAGE5	5u
+#define MAIN_DISPLAY_PAGE6	6u
+
+#define MAIN_DISPLAY_LAST_PAGE 		MAIN_DISPLAY_PAGE6
+
+// Other defines
+#define ANF_HIGH_RANGE 	0u
+#define ANF_LOW_RANGE		1u
+
+#define LED_OFF	0u
+#define LED_ON	1u
+
+#define DEVICE_NAME 		 "mikroAMP V1"
+#define FIRMWARE_VERSION "FW: V1.02062019"
+#define HARDWARE_VERSION "HW: V1.13042019"
+#define WEBSITE_INFO 		 "forum.yu3ma.net"
+
 // **************************************************************************************
 // **************************************************************************************
 // AD Definicije
 // **************************************************************************************
 // **************************************************************************************
 #define AD_REFERENCE  2.5000 // U Voltima
-#define AD_RESOLUTION 4096ul // U Digitima
+#define AD_RESOLUTION 4095ul // U Digitima
 
 typedef struct
 {
@@ -113,12 +135,19 @@ typedef struct
 	unsigned char LRange;
 	unsigned char HRange;
 	
+	float ADCHCumulative; // For consumption
+	float ADCLCumulative; // For consumption
+	unsigned long Samples; 
+	
 } _CurrentMeasurement_type;
 
 typedef struct
 {
 	unsigned short ADCRaw;
 	float ADCAverage;
+
+	float Cumulative; // For consumption
+	unsigned long Samples; 
 	
 } _VoltageMeasurement_type;
 
